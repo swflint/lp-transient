@@ -46,7 +46,7 @@
 ;;                   ("5" . "-90°")
 ;;                   ("6" . "180°")))
 ;;
-;; - The class `transient-extras-options-from-dynamic-choices', based
+;; - The class `transient-extras-option-from-dynamic-choices', based
 ;;   off of `transient-option'.  This allows completion of options
 ;;   whose choices are determined dynamically.  It requires a
 ;;   `choices-function' (initialized with `:choices-function') and can
@@ -55,11 +55,11 @@
 ;;   (default)), the `:choices-function' is run to populate the
 ;;   choices list, and `transient-infix-read' is called as normal.  Ex:
 ;;      (transient-define-argument transient-extras-lp--printer ()
-;;        :class 'transient-extras-options-dynamic-choices
+;;        :class 'transient-extras-option-dynamic-choices
 ;;        :description "Printer"
 ;;        :key "d"
 ;;        :argument "-d"
-;;        :choices-function (transient-extras-get-options-from-command-output
+;;        :choices-function (transient-extras-make-command-filter
 ;;                           "lpstat" "-a"
 ;;                           (lambda (line)
 ;;                             (let ((index (string-match "[[:space:]]" line)))
@@ -68,12 +68,16 @@
 ;;                                 line))))
 ;;        :prompt "Printer? ")
 ;;
-;; - To simplify gathering choices for
-;;   `transient-extras-options-dynamic-choices', the function
-;;   `transient-extras-get-options-from-command-output'.  This
-;;   function returns a zero-argument lambda from a PROGRAM, a list of
-;;   ARGUMENTS and a FILTER.  It will run PROGRAM with ARGUMENTS,
-;;   passing each line through FILTER, and removing all nil results.
+;; - The function `transient-extras-filter-command-output' can be used
+;;   to run a command with a set of arguments, and process and filter
+;;   the output line-by-line to return a list of possible choices.
+;;
+;; - To simplify using `transient-extras-filter-command-output' with
+;;   `transient-extras-options-from-dynamic-choices', the function
+;;   `transient-extras-make-command-filter' is provided.  It takes the
+;;   same arguments as `transient-extras-filter-command-output' but
+;;   instead returns a closure which calls
+;;   `transient-extras-filter-command-output'.
 
 
 (require 'transient)
@@ -173,36 +177,39 @@ for the display.")
      (propertize "|" 'face 'transient-inactive-value))))
 
 
-;; Read from command
+;; Dynamic choices
 
-(defclass transient-extras-options-dynamic-choices (transient-option)
+(defclass transient-extras-option-dynamic-choices (transient-option)
   ((choices-function :initarg :choices-function)
    (cache-choices-p :initarg :cachep :initform nil))
-  "Class used for command line options which get their arguments
-from a command.")
+  "Class used for command line options where `choices' is filled
+from a function CHOICES-FUNCTION, and caching behavior is
+controlled with `cache-choices-p' (`:cachep').")
 
-(defun transient-extras-get-options-from-command-output (program arguments filter)
+(cl-defmethod transient-infix-read :around ((obj transient-extras-option-dynamic-choices))
+  (with-slots (cache-choices-p choices-function) obj
+    (unless (slot-boundp obj 'choices)
+      (setf (oref obj choices) (funcall choices-function)))
+    (prog1
+        (cl-call-next-method obj)
+      (unless cache-choices-p
+        (slot-makeunbound obj 'choices)))))
+
+(defun transient-extras-filter-command-output (program arguments filter)
+  "FILTER the output of PROGRAM run with ARGUMENTS, removing nils."
+  (cl-remove-if #'null (mapcar filter
+                               (split-string (with-temp-buffer
+                                               (apply (apply-partially #'call-process
+                                                                       program
+                                                                       nil t nil)
+                                                      arguments)
+                                               (buffer-string))
+                                             "\n" 'omit-nulls))))
+
+(defun transient-extras-make-command-filter (program arguments filter)
   "Return a function to FILTER output of PROGRAM with ARGUMENTS."
   (lambda ()
-    (cl-remove-if #'null (mapcar filter
-                                 (split-string (with-temp-buffer
-                                                 (apply (apply-partially #'call-process
-                                                                         program
-                                                                         nil t nil)
-                                                        arguments)
-                                                 (buffer-string))
-                                               "\n" 'omit-nulls)))))
-
-(cl-defmethod transient-infix-read :around ((obj transient-extras-options-dynamic-choices))
-  (with-slots (cache-choices-p choices-function) obj
-    (if (and cache-choices-p
-             (slot-boundp obj 'choices))
-        (cl-call-next-method obj)
-      (let ((choices (funcall choices-function)))
-        (setf (oref obj choices) choices)
-        (prog1 (cl-call-next-method obj)
-          (unless cache-choices-p
-            (slot-makeunbound obj 'choices)))))))
+    (transient-extras-filter-command-output program arguments filter)))
 
 (provide 'transient-extras)
 

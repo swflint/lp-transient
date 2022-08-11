@@ -92,12 +92,12 @@ short-edge\\)\\)"
   :choices '("one-sided" "two-sided-long-edge" "two-sided-short-edge"))
 
 (transient-define-argument transient-extras-lp--printer ()
-  :class 'transient-extras-options-dynamic-choices
+  :class 'transient-extras-option-dynamic-choices
   :description "Printer"
   :key "d"
   :argument "-d"
   :cachep t
-  :choices-function (transient-extras-get-options-from-command-output
+  :choices-function (transient-extras-make-command-filter
                      "lpstat" '("-a")
                      (lambda (line)
                        (let ((index (string-match "[[:space:]]" line)))
